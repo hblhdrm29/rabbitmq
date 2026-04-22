@@ -1,0 +1,24 @@
+# Docker Data (PENTING: Jangan masukkan data DB ke Git)
+mysql-data/
+
+# Backend Dependencies & Binary
+backend/bin/
+backend/*.exe
+backend/backend
+.env
+rabbitmq/.env
+
+# Node.js (Frontend)
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDE Files
+.vscode/
+.idea/
+*.swp
