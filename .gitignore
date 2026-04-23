@@ -22,3 +22,9 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Cache & Temp Files
+.cache/
+.gocache/
+.vite/
+.eslintcache

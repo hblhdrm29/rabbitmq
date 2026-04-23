@@ -125,7 +125,7 @@ func main() {
 		}
 		payload, _ := json.Marshal(statusEvent)
 		
-		err = ch.Publish("", q.Name, false, false, amqp.Publishing{
+		err = ch.Publish("transaction_exchange", "", false, false, amqp.Publishing{
 			ContentType: "application/json",
 			Body:        payload,
 			Type:        "TRANSACTION_STATUS_UPDATED",

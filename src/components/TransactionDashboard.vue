@@ -44,6 +44,7 @@ const limit = ref(10)
 const isLoading = ref(false)
 const isSubmitting = ref(false)
 const isDialogOpen = ref(false)
+const wsStatus = ref<'connecting' | 'connected' | 'disconnected'>('connecting')
 
 const txState = ref<'idle' | 'processing' | 'success'>('idle')
 const currentTxId = ref<string | null>(null)
@@ -118,11 +119,17 @@ const createTransaction = async () => {
       if (!newTx.created_at) newTx.created_at = new Date().toISOString()
       if (!newTx.status) newTx.status = 'PENDING'
       
-      if (page.value === 1) {
+      // Cek apakah data sudah masuk lewat WebSocket (Worker) sebelum respon HTTP selesai
+      const exists = transactions.value.some(t => String(t.id).toLowerCase() === String(newTx.id).toLowerCase())
+      
+      if (!exists && page.value === 1) {
+        if (!newTx.created_at) newTx.created_at = new Date().toISOString()
+        if (!newTx.status) newTx.status = 'PENDING'
+        
         transactions.value.unshift(newTx)
         if (transactions.value.length > limit.value) transactions.value.pop()
+        total.value += 1
       }
-      total.value += 1
 
       // Don't close dialog, leave it as processing
     } else {
@@ -142,7 +149,7 @@ const closeDialog = () => {
 }
 
 const preventCloseIfProcessing = (e: Event) => {
-  if (txState.value === 'processing') {
+  if (txState.value === 'processing' || txState.value === 'success') {
     e.preventDefault()
   }
 }
@@ -164,46 +171,71 @@ watch(isDialogOpen, (newVal) => {
 let ws: WebSocket | null = null
 
 const connectWS = () => {
+  wsStatus.value = 'connecting'
   ws = new WebSocket('ws://localhost:8086/ws')
   
+  ws.onopen = () => {
+    console.log('WebSocket Connected')
+    wsStatus.value = 'connected'
+  }
+
   ws.onmessage = (event) => {
-    const data = JSON.parse(event.data)
-    
-    // Jika ini adalah event status update (dari Consumer)
-    if (data.status === 'SUCCESS' && data.id) {
-       // Update status di list lokal agar berubah jadi hijau seketika
-       const index = transactions.value.findIndex(t => t.id === data.id)
-       if (index !== -1 && transactions.value[index]) {
-         transactions.value[index].status = 'SUCCESS'
-       }
-
-       // Update UI Modal if it is the current transaction
-       if (currentTxId.value === data.id) {
-         txState.value = 'success'
-       } else {
-         toast.success(`Pembayaran Berhasil!`, {
-           description: `ID: ${data.id.substring(0, 8)}... telah sukses diproses.`
-         })
-       }
-       return
-    }
-
-    // Jika ini adalah transaksi baru (dari Worker)
-    // Only toast and inject if we didn't just create it ourselves (we inject ourselves above)
-    const existingIndex = transactions.value.findIndex(t => t.id === data.id)
-    if (existingIndex === -1 && page.value === 1) {
-      if (!data.created_at) data.created_at = new Date().toISOString()
-      transactions.value.unshift(data)
-      if (transactions.value.length > limit.value) transactions.value.pop()
-      total.value += 1
+    try {
+      const data = JSON.parse(event.data)
+      console.log('WS Message Received:', data)
       
-      toast.success(`Transaksi Baru!`, {
-        description: `${data.merchant_name} - Rp ${data.amount.toLocaleString('id-ID')}`,
-      })
+      // Jika ini adalah event status update (dari Consumer)
+      if (data.status === 'SUCCESS' && data.id) {
+         // Update status di list lokal agar berubah jadi hijau seketika
+         const index = transactions.value.findIndex(t => String(t.id).toLowerCase() === String(data.id).toLowerCase())
+         if (index !== -1) {
+           const tx = transactions.value[index]
+           if (tx) {
+             transactions.value[index] = { ...tx, status: 'SUCCESS' }
+           }
+         }
+
+         // Update UI Modal if it is the current transaction
+         if (currentTxId.value && String(currentTxId.value).toLowerCase() === String(data.id).toLowerCase()) {
+           txState.value = 'success'
+         } else {
+           toast.success(`Pembayaran Berhasil!`, {
+             description: `ID: ${data.id.substring(0, 8)}... telah sukses diproses.`
+           })
+         }
+         return
+      }
+
+      // Jika ini adalah transaksi baru (dari Worker)
+      const existingIndex = transactions.value.findIndex(t => String(t.id).toLowerCase() === String(data.id).toLowerCase())
+      
+      if (existingIndex === -1 && page.value === 1) {
+        if (!data.created_at) data.created_at = new Date().toISOString()
+        transactions.value.unshift(data)
+        if (transactions.value.length > limit.value) transactions.value.pop()
+        total.value += 1
+        
+        // Jangan tampilkan toast "Transaksi Baru" jika ini adalah transaksi yang kita buat sendiri
+        const isCurrentTx = currentTxId.value && String(currentTxId.value).toLowerCase() === String(data.id).toLowerCase()
+        if (!isCurrentTx) {
+          toast.success(`Transaksi Baru!`, {
+            description: `${data.merchant_name} - Rp ${data.amount.toLocaleString('id-ID')}`,
+          })
+        }
+      }
+    } catch (e) {
+      console.error('Error parsing WS message:', e)
     }
   }
 
+  ws.onerror = (err) => {
+    console.error('WebSocket Error:', err)
+    wsStatus.value = 'disconnected'
+  }
+
   ws.onclose = () => {
+    console.log('WebSocket Closed. Retrying in 3s...')
+    wsStatus.value = 'disconnected'
     setTimeout(connectWS, 3000)
   }
 }
@@ -237,7 +269,7 @@ const getStatusVariant = (status: string) => {
     
     <div class="flex justify-between items-end">
       <div>
-        <h1 class="text-3xl font-bold tracking-tight">Transaction Dashboard</h1>
+        <h1 class="text-3xl font-bold tracking-tight mb-1">Transaction Dashboard</h1>
         <p class="text-muted-foreground font-medium">Monitoring 1,000,000 data transaksi secara real-time.</p>
       </div>
       <div class="flex items-end gap-6">

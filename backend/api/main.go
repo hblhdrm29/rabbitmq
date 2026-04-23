@@ -94,6 +94,7 @@ func main() {
 		}
 
 		t.ID = uuid.New().String()
+		t.Status = "PENDING"
 		if t.UserID == "" {
 			t.UserID = uuid.New().String()
 		}
