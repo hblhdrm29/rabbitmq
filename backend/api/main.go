@@ -24,6 +24,7 @@ type Transaction struct {
 	MerchantName string  `json:"merchant_name"`
 	UserID       string  `json:"user_id"`
 	CreatedAt    string  `json:"created_at"`
+	PaymentMethod string `json:"payment_method"`
 }
 
 var db *sql.DB
@@ -57,7 +58,7 @@ func main() {
 		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 		offset := (page - 1) * limit
 
-		rows, err := db.Query("SELECT id, amount, description, status, merchant_name, user_id, created_at FROM transactions ORDER BY created_at DESC LIMIT ? OFFSET ?", limit, offset)
+		rows, err := db.Query("SELECT id, amount, description, status, merchant_name, user_id, created_at, COALESCE(payment_method, 'CASH') FROM transactions ORDER BY created_at DESC LIMIT ? OFFSET ?", limit, offset)
 		if err != nil {
 			log.Println("Query Error:", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -68,7 +69,7 @@ func main() {
 		var transactions []Transaction
 		for rows.Next() {
 			var t Transaction
-			rows.Scan(&t.ID, &t.Amount, &t.Description, &t.Status, &t.MerchantName, &t.UserID, &t.CreatedAt)
+			rows.Scan(&t.ID, &t.Amount, &t.Description, &t.Status, &t.MerchantName, &t.UserID, &t.CreatedAt, &t.PaymentMethod)
 			transactions = append(transactions, t)
 		}
 
@@ -105,8 +106,8 @@ func main() {
 		}
 
 		// 1. Simpan ke tabel transactions
-		_, err = tx.Exec("INSERT INTO transactions (id, amount, description, status, merchant_name, user_id) VALUES (?, ?, ?, ?, ?, ?)",
-			t.ID, t.Amount, t.Description, "PENDING", t.MerchantName, t.UserID)
+		_, err = tx.Exec("INSERT INTO transactions (id, amount, description, status, merchant_name, user_id, payment_method) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			t.ID, t.Amount, t.Description, "PENDING", t.MerchantName, t.UserID, t.PaymentMethod)
 		if err != nil {
 			tx.Rollback()
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

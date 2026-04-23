@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, reactive, computed } from 'vue'
+import { ref, onMounted, onUnmounted, reactive, computed, watch } from 'vue'
 import { 
   Table, 
   TableBody, 
@@ -24,7 +24,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Toaster } from '@/components/ui/sonner'
 import { toast } from 'vue-sonner'
-import { Plus, Loader2 } from 'lucide-vue-next'
+import { Plus, Loader2, CheckCircle2 } from 'lucide-vue-next'
 
 interface Transaction {
   id: string
@@ -34,6 +34,7 @@ interface Transaction {
   merchant_name: string
   user_id: string
   created_at: string
+  payment_method: string
 }
 
 const transactions = ref<Transaction[]>([])
@@ -44,10 +45,14 @@ const isLoading = ref(false)
 const isSubmitting = ref(false)
 const isDialogOpen = ref(false)
 
+const txState = ref<'idle' | 'processing' | 'success'>('idle')
+const currentTxId = ref<string | null>(null)
+
 const form = reactive({
   merchant_name: '',
   description: '',
-  displayAmount: ''
+  displayAmount: '',
+  payment_method: 'CASH'
 })
 
 // Convert display string "10.000" back to number 10000
@@ -73,9 +78,9 @@ const fetchTransactions = async (p = 1) => {
   try {
     const res = await fetch(`http://localhost:8080/transactions?page=${p}&limit=${limit.value}`)
     const json = await res.json()
-    transactions.value = json.data
-    total.value = json.total
-    page.value = json.page
+    transactions.value = json.data || []
+    total.value = json.total || 0
+    page.value = json.page || 1
   } catch (error) {
     console.error('Failed to fetch transactions:', error)
     toast.error('Gagal mengambil data transaksi')
@@ -91,6 +96,8 @@ const createTransaction = async () => {
   }
 
   isSubmitting.value = true
+  txState.value = 'processing'
+
   try {
     const res = await fetch('http://localhost:8080/transactions', {
       method: 'POST',
@@ -98,29 +105,60 @@ const createTransaction = async () => {
       body: JSON.stringify({
         merchant_name: form.merchant_name,
         description: form.description,
-        amount: rawAmount.value
+        amount: rawAmount.value,
+        payment_method: form.payment_method
       })
     })
 
     if (res.ok) {
-      toast.info('Transaksi sedang diproses...', {
-        description: 'Menunggu konfirmasi dari Outbox Worker & RabbitMQ'
-      })
-      isDialogOpen.value = false
-      // Reset form
-      form.merchant_name = ''
-      form.description = ''
-      form.displayAmount = ''
+      const newTx = await res.json()
+      currentTxId.value = newTx.id
+      
+      // Inject the transaction into the local list immediately
+      if (!newTx.created_at) newTx.created_at = new Date().toISOString()
+      if (!newTx.status) newTx.status = 'PENDING'
+      
+      if (page.value === 1) {
+        transactions.value.unshift(newTx)
+        if (transactions.value.length > limit.value) transactions.value.pop()
+      }
+      total.value += 1
+
+      // Don't close dialog, leave it as processing
     } else {
       throw new Error('Gagal membuat transaksi')
     }
   } catch (error) {
     console.error('Create transaction error:', error)
     toast.error('Gagal membuat transaksi')
+    txState.value = 'idle'
   } finally {
     isSubmitting.value = false
   }
 }
+
+const closeDialog = () => {
+  isDialogOpen.value = false
+}
+
+const preventCloseIfProcessing = (e: Event) => {
+  if (txState.value === 'processing') {
+    e.preventDefault()
+  }
+}
+
+watch(isDialogOpen, (newVal) => {
+  if (!newVal) {
+    setTimeout(() => {
+      txState.value = 'idle'
+      currentTxId.value = null
+      form.merchant_name = ''
+      form.description = ''
+      form.displayAmount = ''
+      form.payment_method = 'CASH'
+    }, 300)
+  }
+})
 
 // WebSocket setup
 let ws: WebSocket | null = null
@@ -135,9 +173,14 @@ const connectWS = () => {
     if (data.status === 'SUCCESS' && data.id) {
        // Update status di list lokal agar berubah jadi hijau seketika
        const index = transactions.value.findIndex(t => t.id === data.id)
-       const item = transactions.value[index]
-       if (item) {
-         item.status = 'SUCCESS'
+       if (index !== -1 && transactions.value[index]) {
+         transactions.value[index].status = 'SUCCESS'
+       }
+
+       // Update UI Modal if it is the current transaction
+       if (currentTxId.value === data.id) {
+         txState.value = 'success'
+       } else {
          toast.success(`Pembayaran Berhasil!`, {
            description: `ID: ${data.id.substring(0, 8)}... telah sukses diproses.`
          })
@@ -146,12 +189,17 @@ const connectWS = () => {
     }
 
     // Jika ini adalah transaksi baru (dari Worker)
-    toast.success(`Transaksi Baru!`, {
-      description: `${data.merchant_name} - Rp ${data.amount.toLocaleString('id-ID')}`,
-    })
-    
-    if (page.value === 1) {
-      fetchTransactions(1)
+    // Only toast and inject if we didn't just create it ourselves (we inject ourselves above)
+    const existingIndex = transactions.value.findIndex(t => t.id === data.id)
+    if (existingIndex === -1 && page.value === 1) {
+      if (!data.created_at) data.created_at = new Date().toISOString()
+      transactions.value.unshift(data)
+      if (transactions.value.length > limit.value) transactions.value.pop()
+      total.value += 1
+      
+      toast.success(`Transaksi Baru!`, {
+        description: `${data.merchant_name} - Rp ${data.amount.toLocaleString('id-ID')}`,
+      })
     }
   }
 
@@ -199,42 +247,82 @@ const getStatusVariant = (status: string) => {
               <Plus :size="18" /> Tambah Transaksi
             </Button>
           </DialogTrigger>
-          <DialogContent class="sm:max-w-[425px]">
-            <DialogHeader>
-              <DialogTitle>Buat Transaksi Baru</DialogTitle>
-              <DialogDescription>
-                Masukkan detail transaksi. Data akan diproses melalui RabbitMQ.
-              </DialogDescription>
-            </DialogHeader>
-            <div class="grid gap-6 py-4">
-              <div class="space-y-2">
-                <Label for="merchant">Merchant</Label>
-                <Input id="merchant" v-model="form.merchant_name" placeholder="Contoh: Shopee, Tokopedia" />
-              </div>
-              <div class="space-y-2">
-                <Label for="desc">Deskripsi</Label>
-                <Input id="desc" v-model="form.description" placeholder="Kopi Susu, Token Listrik" />
-              </div>
-              <div class="space-y-2">
-                <Label for="amount">Jumlah</Label>
-                <div class="relative">
-                  <span class="absolute left-3 top-2 text-muted-foreground font-medium">Rp</span>
-                  <Input 
-                    id="amount" 
-                    v-model="form.displayAmount" 
-                    @input="handleAmountInput"
-                    placeholder="0" 
-                    class="pl-10 font-mono font-bold text-lg"
-                  />
+          <DialogContent 
+            class="sm:max-w-[425px]" 
+            @interact-outside="preventCloseIfProcessing"
+            @escape-keydown="preventCloseIfProcessing"
+          >
+            <template v-if="txState === 'idle'">
+              <DialogHeader>
+                <DialogTitle>Buat Transaksi Baru</DialogTitle>
+                <DialogDescription>
+                  Masukkan detail transaksi. Data akan diproses melalui RabbitMQ.
+                </DialogDescription>
+              </DialogHeader>
+              <div class="grid gap-6 py-4">
+                <div class="space-y-2">
+                  <Label for="merchant">Merchant</Label>
+                  <Input id="merchant" v-model="form.merchant_name" placeholder="Contoh: Shopee, Tokopedia" />
+                </div>
+                <div class="space-y-2">
+                  <Label for="desc">Deskripsi</Label>
+                  <Input id="desc" v-model="form.description" placeholder="Kopi Susu, Token Listrik" />
+                </div>
+                <div class="space-y-2">
+                  <Label for="amount">Jumlah</Label>
+                  <div class="relative">
+                    <span class="absolute left-3 top-2 text-muted-foreground font-medium">Rp</span>
+                    <Input 
+                      id="amount" 
+                      v-model="form.displayAmount" 
+                      @input="handleAmountInput"
+                      placeholder="0" 
+                      class="pl-10 font-mono font-bold text-lg"
+                    />
+                  </div>
+                </div>
+                <div class="space-y-2">
+                  <Label>Metode Pembayaran</Label>
+                  <div class="flex gap-4">
+                    <label class="flex items-center gap-2 cursor-pointer p-3 border rounded-lg flex-1 border-primary bg-primary/5">
+                      <input type="radio" v-model="form.payment_method" value="CASH" class="hidden" />
+                      <div class="w-4 h-4 rounded-full border border-primary flex items-center justify-center">
+                        <div class="w-2 h-2 rounded-full bg-primary" v-if="form.payment_method === 'CASH'"></div>
+                      </div>
+                      <span class="font-medium text-sm">Tunai (Cash)</span>
+                    </label>
+                  </div>
                 </div>
               </div>
-            </div>
-            <DialogFooter>
-              <Button type="submit" class="w-full" :disabled="isSubmitting" @click="createTransaction">
-                <Loader2 v-if="isSubmitting" class="mr-2 h-4 w-4 animate-spin" />
-                Simpan Transaksi (Rp {{ form.displayAmount || '0' }})
-              </Button>
-            </DialogFooter>
+              <DialogFooter>
+                <Button type="submit" class="w-full" :disabled="isSubmitting" @click="createTransaction">
+                  Simpan Transaksi (Rp {{ form.displayAmount || '0' }})
+                </Button>
+              </DialogFooter>
+            </template>
+            
+            <template v-else-if="txState === 'processing'">
+              <div class="flex flex-col items-center justify-center py-12 space-y-6">
+                <Loader2 class="h-16 w-16 animate-spin text-primary" />
+                <div class="space-y-2 text-center">
+                  <h3 class="text-2xl font-bold">Memproses Transaksi</h3>
+                  <p class="text-muted-foreground">Data sedang dikirim ke RabbitMQ dan diproses oleh Consumer...</p>
+                </div>
+              </div>
+            </template>
+            
+            <template v-else-if="txState === 'success'">
+              <div class="flex flex-col items-center justify-center py-10 space-y-6">
+                <div class="h-24 w-24 bg-green-100 rounded-full flex items-center justify-center text-green-600 mb-2 animate-in zoom-in duration-300">
+                  <CheckCircle2 class="h-12 w-12" />
+                </div>
+                <div class="space-y-2 text-center">
+                  <h3 class="text-2xl font-bold text-green-600">Transaksi Berhasil!</h3>
+                  <p class="text-muted-foreground">Data telah tersimpan di database dan sinkronisasi real-time selesai.</p>
+                </div>
+                <Button class="mt-4 w-full" @click="closeDialog">Selesai</Button>
+              </div>
+            </template>
           </DialogContent>
         </Dialog>
 
@@ -258,13 +346,14 @@ const getStatusVariant = (status: string) => {
                 <TableHead class="w-[200px]">Waktu</TableHead>
                 <TableHead>Merchant</TableHead>
                 <TableHead>Deskripsi</TableHead>
+                <TableHead>Pembayaran</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead class="text-right">Jumlah</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               <TableRow v-if="isLoading">
-                <TableCell colspan="5" class="h-24 text-center">
+                <TableCell colspan="6" class="h-24 text-center">
                    <div class="flex items-center justify-center gap-2">
                      <Loader2 class="h-5 w-5 animate-spin text-primary" />
                      Memuat data transaksi...
@@ -272,12 +361,15 @@ const getStatusVariant = (status: string) => {
                 </TableCell>
               </TableRow>
               <TableRow v-else-if="transactions.length === 0">
-                <TableCell colspan="5" class="h-24 text-center">Tidak ada transaksi.</TableCell>
+                <TableCell colspan="6" class="h-24 text-center">Tidak ada transaksi.</TableCell>
               </TableRow>
               <TableRow v-for="t in transactions" :key="t.id" class="group hover:bg-muted/30 transition-colors">
                 <TableCell class="text-xs text-muted-foreground font-medium">{{ formatDate(t.created_at) }}</TableCell>
                 <TableCell class="font-bold text-primary">{{ t.merchant_name }}</TableCell>
                 <TableCell>{{ t.description }}</TableCell>
+                <TableCell>
+                  <Badge variant="outline" class="font-bold text-xs">{{ t.payment_method || 'CASH' }}</Badge>
+                </TableCell>
                 <TableCell>
                   <Badge :variant="getStatusVariant(t.status)" class="font-bold">{{ t.status }}</Badge>
                 </TableCell>
