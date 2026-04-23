@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import TransactionDashboard from './components/TransactionDashboard.vue'
+import { RouterView } from 'vue-router'
+import { Toaster } from '@/components/ui/sonner'
 </script>
 
 <template>
-  <TransactionDashboard />
+  <RouterView />
+  <Toaster position="top-right" rich-colors />
 </template>
 
 <style>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, reactive, computed, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { 
   Table, 
   TableBody, 
@@ -22,9 +23,8 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Toaster } from '@/components/ui/sonner'
 import { toast } from 'vue-sonner'
-import { Plus, Loader2, CheckCircle2 } from 'lucide-vue-next'
+import { Plus, Loader2, CheckCircle2, LogOut, User, RefreshCw } from 'lucide-vue-next'
 
 interface Transaction {
   id: string
@@ -38,6 +38,17 @@ interface Transaction {
 }
 
 const transactions = ref<Transaction[]>([])
+const router = useRouter()
+const currentUsername = ref(localStorage.getItem('username') || 'User')
+
+const handleLogout = () => {
+  localStorage.removeItem('token')
+  localStorage.removeItem('user_id')
+  localStorage.removeItem('username')
+  toast.success('Berhasil logout')
+  router.push('/login')
+}
+
 const total = ref(0)
 const page = ref(1)
 const limit = ref(10)
@@ -77,7 +88,18 @@ const handleAmountInput = (e: Event) => {
 const fetchTransactions = async (p = 1) => {
   isLoading.value = true
   try {
-    const res = await fetch(`http://localhost:8080/transactions?page=${p}&limit=${limit.value}`)
+    const token = localStorage.getItem('token')
+    const res = await fetch(`http://localhost:8080/transactions?page=${p}&limit=${limit.value}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+
+    if (res.status === 401) {
+      handleLogout()
+      return
+    }
+
     const json = await res.json()
     transactions.value = json.data || []
     total.value = json.total || 0
@@ -100,16 +122,28 @@ const createTransaction = async () => {
   txState.value = 'processing'
 
   try {
+    const token = localStorage.getItem('token')
+    const userId = localStorage.getItem('user_id')
+
     const res = await fetch('http://localhost:8080/transactions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
       body: JSON.stringify({
         merchant_name: form.merchant_name,
         description: form.description,
         amount: rawAmount.value,
-        payment_method: form.payment_method
+        payment_method: form.payment_method,
+        user_id: userId
       })
     })
+
+    if (res.status === 401) {
+      handleLogout()
+      return
+    }
 
     if (res.ok) {
       const newTx = await res.json()
@@ -264,15 +298,35 @@ const getStatusVariant = (status: string) => {
 </script>
 
 <template>
-  <div class="p-8 max-w-6xl mx-auto space-y-8 font-sans">
-    <Toaster position="top-right" />
-    
-    <div class="flex justify-between items-end">
+  <div class="p-8 max-w-6xl mx-auto space-y-8 font-sans bg-zinc-50/50 min-h-screen">
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
       <div>
-        <h1 class="text-3xl font-bold tracking-tight mb-1">Transaction Dashboard</h1>
-        <p class="text-muted-foreground font-medium">Monitoring 1,000,000 data transaksi secara real-time.</p>
+        <h1 class="text-3xl font-extrabold tracking-tight text-zinc-900 dark:text-zinc-50 flex items-center gap-3">
+          <div class="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-500/20">
+            <RefreshCw class="w-6 h-6" />
+          </div>
+          Real-time Dashboard
+        </h1>
+        <p class="text-zinc-500 dark:text-zinc-400 mt-1 font-medium flex items-center gap-2">
+          Monitor transaksi microservices secara instan
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+            <span class="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1.5 animate-pulse"></span>
+            Live
+          </span>
+        </p>
       </div>
-      <div class="flex items-end gap-6">
+
+      <div class="flex items-center gap-3">
+        <div class="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-zinc-800 rounded-full border border-zinc-200 dark:border-zinc-700 shadow-sm">
+          <div class="w-6 h-6 bg-zinc-100 dark:bg-zinc-700 rounded-full flex items-center justify-center border border-zinc-200 dark:border-zinc-600">
+            <User class="w-3.5 h-3.5 text-zinc-600 dark:text-zinc-400" />
+          </div>
+          <span class="text-sm font-semibold text-zinc-700 dark:text-zinc-300">{{ currentUsername }}</span>
+        </div>
+        <Button variant="outline" size="icon" class="rounded-full h-10 w-10 border-zinc-200 dark:border-zinc-800" @click="handleLogout">
+          <LogOut class="w-4 h-4 text-zinc-600 dark:text-zinc-400" />
+        </Button>
+        <div class="w-px h-6 bg-zinc-200 dark:bg-zinc-800 mx-1"></div>
         <Dialog v-model:open="isDialogOpen">
           <DialogTrigger as-child>
             <Button class="gap-2 shadow-lg hover:shadow-xl transition-all duration-300">

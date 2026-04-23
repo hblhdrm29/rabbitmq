@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 )
@@ -35,6 +37,11 @@ func main() {
 	godotenv.Load("../.env")
 	godotenv.Load("../../.env")
 
+	jwtSecret := []byte(os.Getenv("JWT_SECRET"))
+	if len(jwtSecret) == 0 {
+		jwtSecret = []byte("default-secret-key")
+	}
+
 	dbUser := os.Getenv("DB_USER")
 	dbPass := os.Getenv("DB_PASSWORD")
 	dbHost := os.Getenv("DB_HOST")
@@ -50,10 +57,64 @@ func main() {
 	defer db.Close()
 
 	r := gin.Default()
-	r.Use(cors.Default())
+	
+	// Custom CORS configuration to allow Authorization header
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
+
+	// Middleware JWT
+	authMiddleware := func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
+			c.Abort()
+			return
+		}
+
+		tokenString := ""
+		fmt.Sscanf(authHeader, "Bearer %s", &tokenString)
+		if tokenString == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token format"})
+			c.Abort()
+			return
+		}
+
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return jwtSecret, nil
+		})
+
+		if err != nil || !token.Valid {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+			c.Abort()
+			return
+		}
+
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
+			c.Abort()
+			return
+		}
+
+		c.Set("user_id", claims["user_id"])
+		c.Next()
+	}
+
+	// Grouping routes that require authentication
+	authorized := r.Group("/")
+	authorized.Use(authMiddleware)
 
 	// Endpoint untuk mengambil data transaksi (Pagination)
-	r.GET("/transactions", func(c *gin.Context) {
+	authorized.GET("/transactions", func(c *gin.Context) {
 		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 		offset := (page - 1) * limit
@@ -86,7 +147,7 @@ func main() {
 	})
 
 	// Endpoint untuk membuat transaksi baru (Transactional Outbox Pattern)
-	r.POST("/transactions", func(c *gin.Context) {
+	authorized.POST("/transactions", func(c *gin.Context) {
 		var t Transaction
 		if err := c.ShouldBindJSON(&t); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -95,8 +156,13 @@ func main() {
 
 		t.ID = uuid.New().String()
 		t.Status = "PENDING"
+		// Use user_id from token if not provided
 		if t.UserID == "" {
-			t.UserID = uuid.New().String()
+			if uid, exists := c.Get("user_id"); exists {
+				t.UserID = uid.(string)
+			} else {
+				t.UserID = uuid.New().String()
+			}
 		}
 
 		// Mulai transaksi database
