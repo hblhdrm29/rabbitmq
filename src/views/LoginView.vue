@@ -23,7 +23,7 @@ const handleLogin = async () => {
 
   isLoading.value = true
   try {
-    const res = await fetch('http://localhost:8089/login', {
+    const res = await fetch('/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form.value)
@@ -39,7 +39,7 @@ const handleLogin = async () => {
         description: 'Selamat datang kembali!'
       })
       
-      router.push('/')
+      router.push('/dashboard')
     } else {
       toast.error('Login Gagal', {
         description: data.error || 'Username atau password salah'

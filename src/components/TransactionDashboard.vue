@@ -105,7 +105,7 @@ const fetchTransactions = async (p = 1) => {
   isLoading.value = true
   try {
     const token = localStorage.getItem('token')
-    const res = await fetch(`http://localhost:8080/transactions?page=${p}&limit=${limit.value}`, {
+    const res = await fetch(`/api/transactions?page=${p}&limit=${limit.value}`, {
       headers: {
         'Authorization': `Bearer ${token}`
       }
@@ -141,7 +141,7 @@ const createTransaction = async () => {
     const token = localStorage.getItem('token')
     const userId = localStorage.getItem('user_id')
 
-    const res = await fetch('http://localhost:8080/transactions', {
+    const res = await fetch('/api/transactions', {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
@@ -179,7 +179,7 @@ const createTransaction = async () => {
 let ws: WebSocket | null = null
 const connectWS = () => {
   wsStatus.value = 'connecting'
-  ws = new WebSocket('ws://localhost:8086/ws')
+  ws = new WebSocket(`ws://${window.location.host}/ws`)
   
   ws.onopen = () => { wsStatus.value = 'connected' }
   ws.onmessage = (event) => {
@@ -237,10 +237,6 @@ const getStatusVariant = (status: string) => {
     <header class="border-b px-8 py-4 flex items-center justify-between sticky top-0 bg-white/80 backdrop-blur-md z-50">
       <div class="flex items-center gap-4">
         <h1 class="text-xl font-bold tracking-tight">Dashboard</h1>
-        <Badge variant="outline" class="gap-1.5 px-2">
-          <div class="w-1.5 h-1.5 rounded-full" :class="wsStatus === 'connected' ? 'bg-green-500' : 'bg-red-500'"></div>
-          {{ wsStatus === 'connected' ? 'Live' : 'Offline' }}
-        </Badge>
       </div>
 
       <div class="flex items-center gap-6">

@@ -30,7 +30,7 @@ const handleRegister = async () => {
 
   isLoading.value = true
   try {
-    const res = await fetch('http://localhost:8089/register', {
+    const res = await fetch('/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
