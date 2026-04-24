@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, reactive, computed } from 'vue'
+import { ref, onMounted, onUnmounted, reactive, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { 
   Table, 
@@ -71,6 +71,20 @@ const form = reactive({
   description: '',
   displayAmount: '',
   payment_method: 'CASH'
+})
+
+// Reset form and state when dialog closes
+watch(isDialogOpen, (newVal) => {
+  if (!newVal) {
+    setTimeout(() => {
+      txState.value = 'idle'
+      currentTxId.value = null
+      form.merchant_name = ''
+      form.description = ''
+      form.displayAmount = ''
+      form.payment_method = 'CASH'
+    }, 300) // Small delay to wait for close animation
+  }
 })
 
 const rawAmount = computed(() => {
@@ -284,6 +298,10 @@ const getStatusVariant = (status: string) => {
                     <option value="DEBIT">Debit Card</option>
                   </select>
                 </div>
+                <div class="grid gap-2">
+                  <Label for="description">Deskripsi</Label>
+                  <Input id="description" v-model="form.description" placeholder="Keterangan transaksi (opsional)" />
+                </div>
               </div>
               <DialogFooter>
                 <Button class="w-full" :disabled="isSubmitting" @click="createTransaction">
@@ -314,6 +332,7 @@ const getStatusVariant = (status: string) => {
             <TableRow class="bg-slate-50/50">
               <TableHead class="w-[180px]">Waktu</TableHead>
               <TableHead>Merchant</TableHead>
+              <TableHead>Deskripsi</TableHead>
               <TableHead>Metode</TableHead>
               <TableHead class="text-right">Jumlah</TableHead>
               <TableHead class="text-center">Status</TableHead>
@@ -323,6 +342,9 @@ const getStatusVariant = (status: string) => {
             <TableRow v-for="tx in transactions" :key="tx.id" class="hover:bg-slate-50/30 transition-colors">
               <TableCell class="text-muted-foreground tabular-nums text-xs font-medium">{{ formatDate(tx.created_at) }}</TableCell>
               <TableCell class="font-semibold text-slate-700">{{ tx.merchant_name }}</TableCell>
+              <TableCell class="text-xs text-muted-foreground max-w-[200px] truncate" :title="tx.description">
+                {{ tx.description || '-' }}
+              </TableCell>
               <TableCell>
                 <Badge variant="secondary" class="font-medium text-[10px] uppercase tracking-wider">{{ tx.payment_method }}</Badge>
               </TableCell>
@@ -332,7 +354,7 @@ const getStatusVariant = (status: string) => {
               </TableCell>
             </TableRow>
             <TableRow v-if="transactions.length === 0">
-              <TableCell colspan="5" class="h-40 text-center text-muted-foreground italic">Belum ada data transaksi.</TableCell>
+              <TableCell colspan="6" class="h-40 text-center text-muted-foreground italic">Belum ada data transaksi.</TableCell>
             </TableRow>
           </TableBody>
         </Table>

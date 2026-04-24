@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"golang.org/x/crypto/bcrypt"
+	"github.com/go-ldap/ldap/v3"
 )
 
 type User struct {
@@ -32,10 +33,41 @@ type LoginRequest struct {
 var db *sql.DB
 var jwtSecret []byte
 
+func authenticateLDAP(username, password string) (string, bool) {
+	ldapURL := os.Getenv("LDAP_URL")
+	if ldapURL == "" || ldapURL == "mock" {
+		log.Printf("[LDAP MOCK] Authenticating user: %s\n", username)
+		// Mock: Allow 'admin' or any user with password 'password123'
+		if (username == "admin" && password == "admin123") || password == "password123" {
+			log.Printf("[LDAP MOCK] Success for user: %s\n", username)
+			return "ldap-user-" + username, true
+		}
+		return "", false
+	}
+
+	l, err := ldap.DialURL(ldapURL)
+	if err != nil {
+		log.Printf("[LDAP] Connection error: %v\n", err)
+		return "", false
+	}
+	defer l.Close()
+
+	// Bind with a read-only user (if required) or direct bind
+	userDN := fmt.Sprintf("cn=%s,%s", username, os.Getenv("LDAP_BASE_DN"))
+	err = l.Bind(userDN, password)
+	if err != nil {
+		log.Printf("[LDAP] Bind failed for %s: %v\n", username, err)
+		return "", false
+	}
+
+	return "ldap-" + username, true
+}
+
 func main() {
 	godotenv.Load(".env")
 	godotenv.Load("../.env")
 	godotenv.Load("../../.env")
+	godotenv.Load("../../../.env")
 
 	jwtSecret = []byte(os.Getenv("JWT_SECRET"))
 	if len(jwtSecret) == 0 {
@@ -102,18 +134,28 @@ func main() {
 		}
 
 		var id, hashedPassword string
-		err := db.QueryRow("SELECT id, password FROM users WHERE username = ?", req.Username).Scan(&id, &hashedPassword)
-		if err != nil {
-			log.Printf("Login failed: User %s not found\n", req.Username)
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
-			return
-		}
+		
+		// 1. Try LDAP Authentication first
+		ldapID, success := authenticateLDAP(req.Username, req.Password)
+		if success {
+			log.Printf("Login success via LDAP: %s\n", req.Username)
+			id = ldapID
+		} else {
+			// 2. Fallback to Database
+			err := db.QueryRow("SELECT id, password FROM users WHERE username = ?", req.Username).Scan(&id, &hashedPassword)
+			if err != nil {
+				log.Printf("Login failed: User %s not found in LDAP or DB\n", req.Username)
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+				return
+			}
 
-		err = bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(req.Password))
-		if err != nil {
-			log.Printf("Login failed: Incorrect password for user %s\n", req.Username)
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
-			return
+			err = bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(req.Password))
+			if err != nil {
+				log.Printf("Login failed: Incorrect password for user %s\n", req.Username)
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+				return
+			}
+			log.Printf("Login success via Database: %s\n", req.Username)
 		}
 
 		// Generate JWT Token
