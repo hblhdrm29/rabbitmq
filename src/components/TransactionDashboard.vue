@@ -185,18 +185,26 @@ const connectWS = () => {
   ws.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data)
+      
+      // Jika ini adalah sinyal SUCCESS untuk transaksi yang sudah ada
       if (data.status === 'SUCCESS' && data.id) {
          const idx = transactions.value.findIndex(t => String(t.id).toLowerCase() === String(data.id).toLowerCase())
          if (idx !== -1) {
-           const currentTx = transactions.value[idx]
-           if (currentTx) transactions.value[idx] = { ...currentTx, status: 'SUCCESS' }
+           transactions.value[idx] = { ...transactions.value[idx], status: 'SUCCESS' }
          }
+         // Jika ID cocok dengan transaksi yang baru saja dibuat user, ubah state modal ke success
          if (currentTxId.value && String(currentTxId.value).toLowerCase() === String(data.id).toLowerCase()) {
            txState.value = 'success'
          }
-      } else {
+      } 
+      // Jika ini adalah transaksi baru (PENDING)
+      else if (data.id) {
         const exists = transactions.value.some(t => String(t.id).toLowerCase() === String(data.id).toLowerCase())
         if (!exists && page.value === 1) {
+          // FIX: Berikan tanggal sekarang jika backend tidak mengirim created_at
+          if (!data.created_at) {
+            data.created_at = new Date().toISOString()
+          }
           transactions.value.unshift(data)
           if (transactions.value.length > limit.value) transactions.value.pop()
           total.value += 1
