@@ -1,54 +1,67 @@
-# rabbitmq
+# RabbitMQ Broadcasting System
 
-This template should help get you started developing with Vue 3 in Vite.
+Sistem manajemen produk dan transaksi real-time berbasis microservices yang menggunakan RabbitMQ sebagai message broker dan menerapkan pola **Transactional Outbox**.
 
-## Recommended IDE Setup
+## Fitur Utama
+- **Real-time Updates**: Menggunakan WebSockets untuk memperbarui tampilan frontend secara instan saat ada produk baru.
+- **Transactional Outbox Pattern**: Menjamin konsistensi data antara database (MySQL) dan antrian pesan (RabbitMQ).
+- **Authentication**: Integrasi sistem autentikasi (simulasi LDAP/JWT).
+- **Modern UI**: Dibangun dengan Vue 3, Tailwind CSS 4, dan Shadcn Vue untuk tampilan yang premium.
 
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
+## Arsitektur
+1. **API Service**: Menangani request CRUD produk dan menyimpan event ke tabel `outbox`.
+2. **Worker Service**: Membaca data dari tabel `outbox` secara berkala dan mengirimkannya ke RabbitMQ.
+3. **Consumer Service**: Mendengarkan pesan dari RabbitMQ dan meneruskannya ke WebSocket service.
+4. **WS Service**: Menjaga koneksi WebSocket dengan klien frontend untuk siaran real-time.
+5. **Auth Service**: Menangani proses login dan validasi token.
 
-## Recommended Browser Setup
+## Prasyarat
+- [Node.js](https://nodejs.org/) (v20+)
+- [Go](https://golang.org/) (v1.21+)
+- [Docker & Docker Compose](https://www.docker.com/)
 
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
+## Cara Instalasi & Menjalankan
 
-## Type Support for `.vue` Imports in TS
-
-TypeScript cannot handle type information for `.vue` imports by default, so we replace the `tsc` CLI with `vue-tsc` for type checking. In editors, we need [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) to make the TypeScript language service aware of `.vue` types.
-
-## Customize configuration
-
-See [Vite Configuration Reference](https://vite.dev/config/).
-
-## Project Setup
-
-```sh
-npm install
+### 1. Jalankan Infrastruktur (Docker)
+Gunakan Docker Compose untuk menjalankan MySQL, RabbitMQ, dan Nginx:
+```bash
+docker-compose up -d
 ```
 
-### Compile and Hot-Reload for Development
+### 2. Konfigurasi Environment
+Salin `.env.example` ke `.env` (jika ada) atau pastikan nilai di `.env` sudah benar:
+```env
+DB_PASSWORD=rootpassword
+DB_NAME=transaction_db
+RABBITMQ_USER=guest
+RABBITMQ_PASS=guest
+```
 
-```sh
+### 3. Jalankan Backend (Go)
+Anda perlu menjalankan setiap servis backend. Disarankan menggunakan terminal terpisah:
+```bash
+# Jalankan di folder masing-masing servis
+go run backend/api/main.go
+go run backend/auth/main.go
+go run backend/ws/main.go
+go run backend/worker/main.go
+go run backend/consumer/main.go
+```
+
+### 4. Jalankan Frontend (Vue)
+```bash
+npm install
 npm run dev
 ```
+Aplikasi akan berjalan di `http://localhost:5173` (atau port lain yang muncul di terminal).
 
-### Type-Check, Compile and Minify for Production
+## Pengembangan
+- **Linting**: `npm run lint`
+- **Type-check**: `npm run type-check`
+- **Build**: `npm run build`
 
-```sh
-npm run build
-```
-
-### Run Unit Tests with [Vitest](https://vitest.dev/)
-
-```sh
-npm run test:unit
-```
-
-### Lint with [ESLint](https://eslint.org/)
-
-```sh
-npm run lint
-```
+## Teknologi
+- **Frontend**: Vue 3, Vite, Tailwind CSS 4, Radix UI, Lucide Icons.
+- **Backend**: Go (Gin, GORM, RabbitMQ-Go).
+- **Database**: MySQL.
+- **Proxy**: Nginx.
