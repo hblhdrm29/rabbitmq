@@ -29,7 +29,8 @@ import {
   CheckCircle2, 
   LogOut, 
   Search,
-  RefreshCw
+  RefreshCw,
+  LayoutDashboard
 } from 'lucide-vue-next'
 
 interface Transaction {
@@ -190,7 +191,8 @@ const connectWS = () => {
       if (data.status === 'SUCCESS' && data.id) {
          const idx = transactions.value.findIndex(t => String(t.id).toLowerCase() === String(data.id).toLowerCase())
          if (idx !== -1) {
-           transactions.value[idx] = { ...transactions.value[idx], status: 'SUCCESS' }
+           const tx = transactions.value[idx]
+           if (tx) tx.status = 'SUCCESS'
          }
          // Jika ID cocok dengan transaksi yang baru saja dibuat user, ubah state modal ke success
          if (currentTxId.value && String(currentTxId.value).toLowerCase() === String(data.id).toLowerCase()) {
@@ -205,7 +207,7 @@ const connectWS = () => {
           if (!data.created_at) {
             data.created_at = new Date().toISOString()
           }
-          transactions.value.unshift(data)
+          transactions.value.unshift(data as Transaction)
           if (transactions.value.length > limit.value) transactions.value.pop()
           total.value += 1
         }
@@ -243,8 +245,14 @@ const getStatusVariant = (status: string) => {
   <div class="min-h-screen bg-white">
     <!-- Clean Top Header -->
     <header class="border-b px-8 py-4 flex items-center justify-between sticky top-0 bg-white/80 backdrop-blur-md z-50">
-      <div class="flex items-center gap-4">
+      <div class="flex items-center gap-8">
         <h1 class="text-xl font-bold tracking-tight">Dashboard</h1>
+        <nav class="hidden md:flex items-center gap-4 text-sm font-medium">
+          <router-link to="/dashboard" class="text-foreground flex items-center gap-1.5 transition-colors">
+            <LayoutDashboard class="w-4 h-4" />
+            Dashboard
+          </router-link>
+        </nav>
       </div>
 
       <div class="flex items-center gap-6">

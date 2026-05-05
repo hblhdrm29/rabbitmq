@@ -16,6 +16,22 @@ export default defineConfig({
   ],
   server: {
     host: true,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8086',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      },
+      '/auth': {
+        target: 'http://localhost:8089',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/auth/, '')
+      },
+      '/ws': {
+        target: 'ws://localhost:8096',
+        ws: true
+      }
+    }
   },
   resolve: {
     alias: {

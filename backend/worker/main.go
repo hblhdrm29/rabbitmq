@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/joho/godotenv"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/segmentio/kafka-go"
 )
 
 func main() {
@@ -61,20 +63,24 @@ func main() {
 	defer ch.Close()
 
 	// Declare Fanout Exchange
-	err = ch.ExchangeDeclare(
-		"transaction_exchange", // name
-		"fanout",               // type
-		true,                   // durable
-		false,                  // auto-deleted
-		false,                  // internal
-		false,                  // no-wait
-		nil,                    // arguments
-	)
+	err = ch.ExchangeDeclare("transaction_exchange", "fanout", true, false, false, false, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Println("Outbox Worker running (Fanout Mode)...")
+	// Connect to Kafka
+	kafkaBroker := os.Getenv("KAFKA_BROKER")
+	if kafkaBroker == "" {
+		kafkaBroker = "localhost:9092"
+	}
+	kafkaWriter := &kafka.Writer{
+		Addr:     kafka.TCP(kafkaBroker),
+		Topic:    "transaction-events",
+		Balancer: &kafka.LeastBytes{},
+	}
+	defer kafkaWriter.Close()
+
+	fmt.Println("Outbox Worker running (RabbitMQ + Kafka)...")
 
 	for {
 		// Polling tabel outbox
@@ -91,21 +97,23 @@ func main() {
 			var payload []byte
 			rows.Scan(&id, &eventType, &payload)
 
-			// Publish ke Exchange (Fanout)
-			err = ch.Publish(
-				"transaction_exchange", // exchange
-				"",                     // routing key (ignored in fanout)
-				false,                  // mandatory
-				false,                  // immediate
-				amqp.Publishing{
-					ContentType: "application/json",
-					Body:        payload,
-					Type:        eventType,
-				})
-
+			// 1. Publish ke RabbitMQ (Fanout)
+			err = ch.Publish("transaction_exchange", "", false, false, amqp.Publishing{
+				ContentType: "application/json",
+				Body:        payload,
+				Type:        eventType,
+			})
 			if err != nil {
-				log.Println("Failed to publish message:", err)
-				continue
+				log.Println("Failed to publish to RabbitMQ:", err)
+			}
+
+			// 2. Publish ke Kafka
+			err = kafkaWriter.WriteMessages(context.Background(), kafka.Message{
+				Key:   []byte(fmt.Sprintf("%d", id)),
+				Value: payload,
+			})
+			if err != nil {
+				log.Println("Failed to publish to Kafka:", err)
 			}
 
 			// Update status di outbox
@@ -113,7 +121,7 @@ func main() {
 			if err != nil {
 				log.Println("Failed to update outbox status:", err)
 			} else {
-				fmt.Printf("Published event %d to RabbitMQ\n", id)
+				fmt.Printf("Published event %d to RabbitMQ & Kafka\n", id)
 			}
 		}
 		rows.Close()

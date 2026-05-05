@@ -19,14 +19,22 @@ import (
 )
 
 type Transaction struct {
-	ID           string  `json:"id"`
-	Amount       float64 `json:"amount"`
-	Description  string  `json:"description"`
-	Status       string  `json:"status"`
-	MerchantName string  `json:"merchant_name"`
-	UserID       string  `json:"user_id"`
-	CreatedAt    string  `json:"created_at"`
-	PaymentMethod string `json:"payment_method"`
+	ID           string    `json:"id"`
+	Amount       float64   `json:"amount"`
+	Description  string    `json:"description"`
+	Status       string    `json:"status"`
+	MerchantName string    `json:"merchant_name"`
+	UserID       string    `json:"user_id"`
+	CreatedAt    time.Time `json:"created_at"`
+	PaymentMethod string   `json:"payment_method"`
+}
+
+type Product struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Price     float64   `json:"price"`
+	Stock     int       `json:"stock"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 var db *sql.DB
@@ -182,6 +190,7 @@ func main() {
 		}
 
 		// 2. Simpan ke tabel outbox
+		t.CreatedAt = time.Now()
 		payload, _ := json.Marshal(t)
 		_, err = tx.Exec("INSERT INTO outbox (event_type, payload) VALUES (?, ?)", "TRANSACTION_CREATED", payload)
 		if err != nil {

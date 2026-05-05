@@ -14,9 +14,13 @@ import (
 )
 
 type Transaction struct {
-	ID           string  `json:"id"`
-	Amount       float64 `json:"amount"`
-	MerchantName string  `json:"merchant_name"`
+	ID            string  `json:"id"`
+	Amount        float64 `json:"amount"`
+	Description   string  `json:"description"`
+	MerchantName  string  `json:"merchant_name"`
+	UserID        string  `json:"user_id"`
+	PaymentMethod string  `json:"payment_method"`
+	Status        string  `json:"status"`
 }
 
 func main() {
@@ -72,8 +76,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Create persistent queue for Consumer
-	q, err := ch.QueueDeclare("consumer_queue", true, false, false, false, nil)
+	// Create persistent queue for Web 1 Consumer
+	q, err := ch.QueueDeclare("web1_consumer_queue", true, false, false, false, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -89,50 +93,62 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println("Payment Consumer running... Waiting for transactions.")
+	fmt.Printf("Web 1 Consumer running (DB: %s)... Waiting for messages.\n", dbName)
 
 	for d := range msgs {
-		log.Printf("Received message: Type=%s, Body=%s\n", d.Type, string(d.Body))
+		log.Printf("Received message: Type=%s\n", d.Type)
 
-		if d.Type != "TRANSACTION_CREATED" {
-			log.Println("Skipping message: not a TRANSACTION_CREATED event")
+		if d.Type == "TRANSACTION_CREATED" {
+			var t Transaction
+			json.Unmarshal(d.Body, &t)
+
+			log.Printf("Syncing transaction to local DB: %s\n", t.ID)
+			// INSERT IGNORE: jika sudah ada (dari API sendiri), skip
+			_, err = db.Exec("INSERT IGNORE INTO transactions (id, amount, description, status, merchant_name, user_id, payment_method) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				t.ID, t.Amount, t.Description, "PENDING", t.MerchantName, t.UserID, t.PaymentMethod)
+			if err != nil {
+				log.Println("Failed to sync transaction:", err)
+			}
+
+			// Simulasi proses perbankan (2 detik)
+			time.Sleep(2 * time.Second)
+
+			// Update status di database jadi SUCCESS
+			_, err = db.Exec("UPDATE transactions SET status = 'SUCCESS' WHERE id = ?", t.ID)
+			if err != nil {
+				log.Println("Failed to update status:", err)
+			}
+
+			// Kirim event status update ke RabbitMQ
+			statusEvent := map[string]interface{}{
+				"id":     t.ID,
+				"status": "SUCCESS",
+			}
+			payload, _ := json.Marshal(statusEvent)
+			ch.Publish("transaction_exchange", "", false, false, amqp.Publishing{
+				ContentType: "application/json",
+				Body:        payload,
+				Type:        "TRANSACTION_STATUS_UPDATED",
+			})
+
 			d.Ack(false)
 			continue
 		}
 
-		var t Transaction
-		json.Unmarshal(d.Body, &t)
-
-		fmt.Printf("Processing payment for: %s (ID: %s)...\n", t.MerchantName, t.ID)
-
-		// Simulasi proses perbankan (2 detik)
-		time.Sleep(2 * time.Second)
-
-		// Update status di database jadi SUCCESS
-		_, err = db.Exec("UPDATE transactions SET status = 'SUCCESS' WHERE id = ?", t.ID)
-		if err != nil {
-			log.Println("Failed to update status:", err)
-			d.Nack(false, true) // Retry if failed
+		if d.Type == "PRODUCT_CREATED" {
+			log.Println("Received product update")
+			d.Ack(false)
 			continue
 		}
 
-		fmt.Printf("Transaction %s successfully processed!\n", t.ID)
-
-		// Kirim event status update ke RabbitMQ agar WebSocket bisa memberitahu Frontend
-		statusEvent := map[string]interface{}{
-			"id":     t.ID,
-			"status": "SUCCESS",
-		}
-		payload, _ := json.Marshal(statusEvent)
-		
-		err = ch.Publish("transaction_exchange", "", false, false, amqp.Publishing{
-			ContentType: "application/json",
-			Body:        payload,
-			Type:        "TRANSACTION_STATUS_UPDATED",
-		})
-
-		if err != nil {
-			log.Println("Failed to publish status update:", err)
+		if d.Type == "TRANSACTION_STATUS_UPDATED" {
+			var status map[string]interface{}
+			json.Unmarshal(d.Body, &status)
+			if id, ok := status["id"].(string); ok {
+				db.Exec("UPDATE transactions SET status = 'SUCCESS' WHERE id = ?", id)
+			}
+			d.Ack(false)
+			continue
 		}
 
 		d.Ack(false)
